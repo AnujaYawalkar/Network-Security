@@ -1,0 +1,144 @@
+import sys
+import Sender
+import db
+import subprocess
+import base64
+
+s_pass = 'r_SessionPassword'
+e_s_pass = 'r_EncryptedSessionPassword.enc'
+e_msg = 'r_EncryptedMessage.enc'
+sign = 'r_MessageStub.txt.sha1'
+email = ''
+cert = 'r_Certificate'
+pub_name = 'r_PublicKey.pem'
+msg_stub = 'r_MessageStub.txt'
+
+def receive(mail) :
+	
+	global mail_val
+	global header
+	global e_s_pass
+	global e_msg
+	global sign
+	global email
+	global cert
+	global msg_stub
+
+	try:
+		with open(mail, "r") as mailfile :
+			mail_val = mailfile.read()
+	except IOError:
+		print "[ERROR] - File does not appear to exist."
+		return False
+	parse(mail_val)
+	print 'EMAIL :', email
+	certAddr = db.extract(email)
+	if certAddr == 'NOT_FOUND' :
+		print 'No certificate exists in the repo'
+		clean()
+		return True
+	elif certAddr == 'VERIFICATION_ERROR' :
+		clean()
+		return True
+
+	subprocess.call(['wget',certAddr,'-q','-O',cert])
+	# VALIDATE WGET OUTPUT
+	pubVal = Sender.getPublic(cert,pub_name)
+
+	if Sender.verify(cert) :
+		c_email = extractEmail(cert)
+		if verifySign(pub_name, msg_stub,sign) :
+			if decryptSessionKey(e_s_pass,s_pass) :
+				decryptMessage(e_msg,s_pass)
+		print '[LOG] Cleaning Files'
+		clean()
+		print '[LOG] Exiting'
+	else :
+		clean()
+		print 'Verification failed of target\'s certificate'
+
+def parse(mail_val) :
+
+	global e_s_pass
+	global e_msg
+	global sign
+	global email
+	global msg_stub
+
+	mail_val = mail_val.split('\n\n')
+	upperStub = mail_val[0].split('-----BEGIN CSC574 MESSAGE-----')
+
+	header = upperStub[0]
+	EncSessionPassword64 = upperStub[1].replace('\n','').replace(' ','')
+
+	EncMessage = mail_val[1]
+
+	lowerStub = mail_val[2].split('-----END CSC574 MESSAGE-----')
+	Signature = lowerStub[0]
+
+	email = header.split(',')[0].replace('from','').replace(':','').replace(' ','')
+	email = email.replace('@ncsu.edu','')
+	
+	msg_stub_val = base64.b64decode(EncSessionPassword64) + '\n\n' +EncMessage + '\n'
+	with open(msg_stub,'wb') as stubfile :
+		stubfile.write(msg_stub_val)
+
+	with open(e_s_pass,'wb') as encpassfile :
+		encpassfile.write(base64.b64decode(EncSessionPassword64))
+	with open(e_msg,'wb') as f :
+		f.write(EncMessage + '\n')
+	with open(sign,'wb') as signfile :
+		signfile.write(Signature)
+	return True
+
+def extractEmail(cert) :
+	# openssl verify -verbose -CAfile root-ca.crt TargetCert
+	print '[LOG] Extracting Unity ID from Certificate'
+	try :
+		output = subprocess.check_output(['openssl','x509','-noout','-in',cert,'-email'])
+	except subprocess.CalledProcessError, e :
+		print '[LOG] Extraction failed : ', e.output
+		return False
+	output = output.split('@')[0]
+	print '[LOG] Extracted : ',output
+	return output
+
+def verifySign(pub_name, msg_stub, sign) :
+	print '[LOG] Verifying Signature'
+	try :
+		output = subprocess.check_output(['openssl','dgst','-sha1','-verify',pub_name,'-signature',sign, msg_stub])
+	except subprocess.CalledProcessError, e :
+		print '[LOG] Verification failed : ', e.output
+		return False
+	return True
+
+def decryptSessionKey(e_s_pass,s_pass) :
+	print '[LOG] Decrypting Session password'
+	output = subprocess.call(['openssl','rsautl','-decrypt','-inkey','as_private.pem','-in',e_s_pass,'-out',s_pass])
+	return True
+
+def decryptMessage(e_msg, s_pass) :
+	print '[LOG] Decrypting Message'
+	with open(s_pass, 'r') as f :
+		s_pass_val = f.read()
+	try :
+		output = subprocess.check_output(['openssl','enc','-d','-aes-256-cbc','-a','-in',e_msg,'-k',s_pass_val])
+	except subprocess.CalledProcessError, e :
+		print '[LOG] Decryption failed : ', e.output
+		return False
+	print '[LOG] Printing Message\n----------------------------------\n',output,'\n----------------------------------'
+	return True
+
+def clean() :
+	print 'Clean called'
+	subprocess.call('rm -rf r_*', shell=True)
+	return
+
+if __name__ == '__main__':
+	if len(sys.argv) == 2 :
+		mail_file = sys.argv[1]
+		receive(mail_file)
+	else :
+		print '[ERROR] - Incorrect number of arguments'
+		
+
