@@ -1,0 +1,52 @@
+import Sender
+import Receiver
+import sys
+import os.path
+import subprocess
+# import Receiver.py
+# INITIALIZE - IMPORT AND SAVE ROOT CERTIFICATE
+
+def initialize() :
+	try :
+		file = open('database.csv','a')  #open the csv file that stores the emain id and public keys of students
+		file.close()
+		subprocess.call(['wget','-q','https://courses.ncsu.edu/csc574/lec/001/wrap/Projects/root-ca.crt','-O','root-ca.crt'])
+		print ("[LOG] Checking root-ca.crt")
+		if os.path.isfile('root-ca.crt') : #check private key
+			print ("[LOG] Checking Private Key")
+			if os.path.isfile('as_private.pem') :
+				print ("[LOG] Checking Public Key")   #check public key
+				if os.path.isfile('as_public.pem') :
+					print ("[LOG] Initilization Complete")
+					return
+				else :
+					print ("[LOG] Public key doesn\'t exist. Creating New")  #ifpublic key is not present in the database then make one for the given private key
+					subprocess.call(['openssl','rsa','-in','as_private.pem','-pubout','-out','as_public.pem'])
+					return
+			else :
+				print ("[LOG] Private key absent") #private key not present
+				sys.exit()
+		else :
+			print ("[LOG] Root certificate absent") #root certi abscent
+			sys.exit()
+
+	except :
+		print ("Something went wrong. Please restart")
+		sys.exit()
+
+if __name__ == '__main__':
+	
+	initialize()   #generate our own public private keys if not present in database at the website
+	while(True) :
+		print ("\t1. Send\n\t2. Receive")
+		choice = raw_input('Enter Choice : ')
+		if int(choice) == 1 : #choice 1 for sending and 2 for receiving
+			msg = raw_input('Enter Message : ')
+			email = raw_input('Enter Destination E-mail(without @ncsu.edu) : ')
+			Sender.send(msg,email)
+		elif int(choice) == 2 :
+			mail = raw_input('Enter Mail File : ')
+			Receiver.receive(mail)
+		else :
+			print ("\nExiting")
+			sys.exit()
