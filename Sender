@@ -1,0 +1,153 @@
+import db
+import subprocess
+import base64
+# openssl x509 -pubkey -noout -in cert.pem  > pubkey.pem
+# openssl verify -verbose -CAfile 1000.pem root-ca.crt
+# openssl rand -base64 32
+# openssl rsautl -encrypt -inkey public_key.pem -pubin -in encrypt.txt -out encrypt.dat 
+# openssl dgst -sha1 -sign priv.pem file.txt > file.txt.sig
+# openssl dgst -sha1 -verify public.pem -signature file.txt.sig file.txt
+
+# STANDARD FILE NAMES
+cert = 's_Certificate'
+pub_name = 's_PublicKey.pem'
+s_pass = 's_SessionPassword'
+e_s_pass = 's_EncryptedSessionPassword.enc'
+e_msg = 's_EncryptedMessage.enc'
+msg_stub = 's_MessageStub.txt'
+msg_stub64 = 's_MessageStub64.txt'
+msg_name = 's_Message.txt'
+sign = 's_MessageStub.txt.sha1'
+mail_file = 'mail'
+self_id = 'ayawalk'
+
+
+def send(msg,email) :
+	global cert
+	global pub_name
+	global s_pass
+	global e_s_pass
+	global e_msg
+	global msg_stub 
+	global msg_name 
+	global sign 
+	global mail_file 
+	global msg_stub64
+
+	try:
+		certAddr = db.extract(email) #send the email idin the extract method of db
+		if certAddr == 'NOT_FOUND' :
+			print 'No certificate exists in the repo'
+			return True
+		elif certAddr == 'VERIFICATION_ERROR' :
+			return True
+
+		
+		with open(msg_name,'w') as writer :
+			writer.write(msg)
+
+		subprocess.call(['wget',certAddr,'-q','-O',cert])
+		# VALIDATE WGET OUTPUT
+		pubVal = getPublic(cert,pub_name)
+		# print pubkey
+		if verify(cert) :
+			s_passVal = getPass(s_pass)
+			encMsg(msg_name,s_pass, e_msg)
+			encPass(s_pass,e_s_pass,pub_name)
+			getMsgStub(msg_stub, e_s_pass,e_msg,msg_stub64)
+			signStub(msg_stub)
+			writeMail(msg_stub64,sign,email,mail_file)
+		else :
+			print '[LOG] Verification failed of target\'s certificate'
+		clean()
+	except :
+		print 'Something went wrong. Exiting cleanly'
+		clean()
+
+def getPublic(cert,pub_name) :
+		# openssl x509 -pubkey -noout -in cert.pem  > pubkey.pem
+	print '[LOG] Extracting Target\'s public key from Certificate'
+	output = subprocess.check_output(['openssl','x509','-pubkey','-noout','-in',cert])
+	with open(pub_name,'w') as pubWriter :
+		pubWriter.write(output)
+	# print 'Wrote Public key ',output,' to file ',pub_name 
+	print '[LOG] Done'
+	return output
+
+def verify(cert) :
+	# openssl verify -verbose -CAfile root-ca.crt TargetCert
+	print '[LOG] Vefifying Certificate'
+	output = subprocess.check_output(['openssl','verify','-CAfile','root-ca.crt',cert])
+	# output = output.split(' ')[1].replace('\n','')
+	if 'OK' in output :
+		print '[LOG] Verified'
+		return True
+	else :
+		print '[LOG] Rejected'
+		return False
+
+def getPass(s_pass) :
+	# openssl rand -base64 32
+	print '[LOG] Writing 32 char session password'
+	output = subprocess.check_output(['openssl','rand','-base64','32'])
+	with open(s_pass,'w') as writer :
+		writer.write(output)
+	# print 'Random 32bit character: ', output
+	return output
+
+
+def encPass(s_pass,e_s_pass,pub_name) :
+	print '[LOG] Encrypting Session password'
+	# openssl rsautl -encrypt -inkey public_key.pem -pubin -in encrypt.txt -out encrypt.dat 
+	subprocess.call(['openssl','rsautl','-encrypt','-inkey',pub_name,'-pubin','-in',s_pass,'-out',e_s_pass])
+	print '[LOG] Done'
+	return True
+
+def encMsg(msg_name, s_pass, e_msg) :
+	print '[LOG] Encrypting message with aes-256-cbc'
+	# openssl enc -aes-256-cbc -e -in msg -a -k SessionPassword -iv 'abcd1234'
+	with open(s_pass, 'r') as f :
+		s_pass_val = f.read()
+	subprocess.call(['openssl','enc','-aes-256-cbc','-e','-in',msg_name,'-a','-k',s_pass_val,'-salt','-out',e_msg])
+	print '[LOG] Done'
+	return True
+
+def getMsgStub(msg_stub, e_s_pass,e_msg, msg_stub64) :
+	print '[LOG] Extracting message stub'
+	with open(e_s_pass,'r') as passFile :
+		encryptedPass = passFile.read()
+	with open(e_msg,'r') as msgFile :
+		encryptedMsg = msgFile.read()
+	contents = encryptedPass+'\n\n'+encryptedMsg
+	contents64 = base64.b64encode(encryptedPass) + '\n\n' + encryptedMsg
+	with open(msg_stub,'w') as stubFile :
+		stubFile.write(contents)
+	with open(msg_stub64,'w') as stubFile64 :
+		stubFile64.write(contents64)
+	print '[LOG] Done'
+	return True;
+
+def signStub(msg_stub) :
+	# openssl dgst -sha1 -sign priv.pem file.txt > file.txt.sig
+	print '[LOG] Signing message stub with private key'
+	subprocess.call(['openssl','dgst','-sha1','-out',sign,'-sign','as_private.pem',msg_stub])
+	print '[LOG] Done'
+	return True
+
+def writeMail(msg_stub64,sign,email,mail_file) :
+	with open(msg_stub64,'r') as stub :
+		msg_stub_val = stub.read()
+		# print 'MSG STUB VAL : -------------------\n',msg_stub_val,'\n-----------------------------------'
+	with open(sign,'r') as signfile :
+		sign_val = signfile.read()
+	header = 'from:'+self_id+'@ncsu.edu,to:'+email+'@ncsu.edu\n-----BEGIN CSC574 MESSAGE-----\n'+msg_stub_val+'\n'+sign_val+'\n-----END CSC574 MESSAGE-----'
+	print '[LOG] Writing final mail to file'
+	with open(mail_file,'w') as mail :
+		mail.write(header)
+	print '[LOG] Written to Mail.txt'
+	return True;
+
+def clean() :
+	print 'Clean called'
+	subprocess.call('rm -rf s_*', shell=True)
+	return
