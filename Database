@@ -1,0 +1,53 @@
+import csv
+import subprocess
+import Sender
+import p2
+
+cert = 'tmp_cert'
+
+def extract(email) :
+	# p2.initialize()
+	flag = False
+	repo_flag = False
+	with open('database.csv','rb') as csvfile :
+		dbReader = csv.reader(csvfile, delimiter=',')
+		for row in dbReader :
+			if email == row[0] :
+				return row[1]
+				flag = True
+		if flag == False :
+			subprocess.call(['wget','-q','https://courses.ncsu.edu/csc574/lec/001/CertificateRepo','-O','CertificateRepo.csv'])
+			with open('CertificateRepo.csv','rb') as certificates :
+				certReader = csv.reader(certificates, delimiter=',')
+				for row in certReader :
+					if email == row[0] :
+						repo_flag = True
+						if insert(row) :
+							subprocess.call(['rm','-rf','tmp_cert'])
+							subprocess.call(['rm','-rf','CertificateRepo.csv'])
+							return row[1]
+						else :
+							subprocess.call(['rm','-rf','tmp_cert'])
+							subprocess.call(['rm','-rf','CertificateRepo.csv'])
+							return 'VERIFICATION_ERROR'
+						print 'Deleteing the file'
+			subprocess.call(['rm','-rf','CertificateRepo.csv'])
+			if repo_flag == False :
+				return 'NOT_FOUND'
+
+def insert(certificateEntry) :
+	global cert
+
+	subprocess.call(['wget',certificateEntry[1],'-q','-O',cert])
+	if Sender.verify(cert) :
+		with open('database.csv','a') as csvfile :
+			dbWriter = csv.writer(csvfile, delimiter=',',quoting=csv.QUOTE_MINIMAL)
+			dbWriter.writerow(certificateEntry) 
+		return True
+	else :
+		print '[LOG] Couldn\'t verify Certificate with index, ', certificateEntry[0]
+		return False
+
+	
+if __name__ == '__main__':
+	print extract('skataka')
